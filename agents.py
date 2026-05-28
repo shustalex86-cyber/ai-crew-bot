@@ -1,8 +1,12 @@
 import anthropic
-from config import ANTHROPIC_API_KEY
+import openai
+from config import ANTHROPIC_API_KEY, OPENAI_API_KEY
 
 MODEL = "claude-sonnet-4-5-20250929"
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+dalle = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+IMAGE_URL_PREFIX = "__IMAGE_URL__:"
 
 
 def _build_user_content(
@@ -34,13 +38,44 @@ def _call(
 ) -> str:
     content = _build_user_content(user_message, image_b64, media_type)
     messages = list(history or []) + [{"role": "user", "content": content}]
-    response = client.messages.create(
+    response = claude.messages.create(
         model=MODEL,
         max_tokens=4096,
         system=system_prompt,
         messages=messages,
     )
     return response.content[0].text
+
+
+def craft_dalle_prompt(user_message: str) -> str:
+    system = (
+        "You are a prompt engineer specializing in DALL-E 3 image generation. "
+        "The user's request may be in Russian. Your job is to:\n"
+        "1. Understand what image the user wants\n"
+        "2. Write a detailed, vivid English prompt for DALL-E 3\n"
+        "3. Add artistic style, lighting, and composition details\n"
+        "Return ONLY the English prompt, nothing else. No explanations."
+    )
+    response = claude.messages.create(
+        model=MODEL,
+        max_tokens=500,
+        system=system,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    return response.content[0].text.strip()
+
+
+def generate_image(user_message: str) -> str:
+    dalle_prompt = craft_dalle_prompt(user_message)
+    response = dalle.images.generate(
+        model="dall-e-3",
+        prompt=dalle_prompt,
+        size="1024x1024",
+        quality="standard",
+        n=1,
+    )
+    url = response.data[0].url
+    return IMAGE_URL_PREFIX + url
 
 
 def orchestrator(
