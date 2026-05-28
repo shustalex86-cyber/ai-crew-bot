@@ -7,6 +7,7 @@ claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 dalle = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 IMAGE_URL_PREFIX = "__IMAGE_URL__:"
+IMAGE_B64_PREFIX = "__IMAGE_B64__:"
 
 
 def _build_user_content(
@@ -49,10 +50,10 @@ def _call(
 
 def craft_dalle_prompt(user_message: str) -> str:
     system = (
-        "You are a prompt engineer specializing in DALL-E 3 image generation. "
+        "You are a prompt engineer specializing in AI image generation. "
         "The user's request may be in Russian. Your job is to:\n"
         "1. Understand what image the user wants\n"
-        "2. Write a detailed, vivid English prompt for DALL-E 3\n"
+        "2. Write a detailed, vivid English prompt for gpt-image-1\n"
         "3. Add artistic style, lighting, and composition details\n"
         "Return ONLY the English prompt, nothing else. No explanations."
     )
@@ -67,15 +68,18 @@ def craft_dalle_prompt(user_message: str) -> str:
 
 def generate_image(user_message: str) -> str:
     dalle_prompt = craft_dalle_prompt(user_message)
-    response = dalle.images.generate(
-        model="dall-e-3",
-        prompt=dalle_prompt,
-        size="1024x1024",
-        quality="standard",
-        n=1,
-    )
-    url = response.data[0].url
-    return IMAGE_URL_PREFIX + url
+    try:
+        response = dalle.images.generate(
+            model="gpt-image-1",
+            prompt=dalle_prompt,
+            size="1024x1024",
+            quality="medium",
+            n=1,
+        )
+        b64_data = response.data[0].b64_json
+        return IMAGE_B64_PREFIX + b64_data
+    except Exception as e:
+        return f"❌ Ошибка генерации изображения: {e}"
 
 
 def orchestrator(
