@@ -14,6 +14,7 @@ from telegram.ext import (
 from config import TELEGRAM_TOKEN
 from crew_manager import run_crew
 from history import clear_history, history_size
+from agents import IMAGE_URL_PREFIX
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 PROCESSING_MESSAGE = "⏳ Обрабатываю ваш запрос, это может занять некоторое время..."
 PROCESSING_IMAGE_MESSAGE = "🖼 Анализирую изображение, это может занять некоторое время..."
+GENERATING_IMAGE_MESSAGE = "🎨 Генерирую изображение с помощью DALL-E 3..."
 
 executor = ThreadPoolExecutor(max_workers=4)
 
@@ -34,10 +36,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🧠 *Оркестратор* — анализирует задачи и координирует команду\n"
         "💻 *Программист* — решает технические задачи и пишет код\n"
         "✍️ *Копирайтер* — создаёт тексты и контент\n"
-        "🎨 *Дизайнер* — даёт советы по дизайну и визуалу\n\n"
+        "🎨 *Дизайнер* — даёт советы по дизайну и генерирует изображения\n\n"
         "Я умею:\n"
         "• Отвечать на текстовые вопросы\n"
-        "• 🖼 Анализировать изображения (описание, OCR, дизайн-ревью)\n\n"
+        "• 🖼 Анализировать фотографии (описание, OCR, дизайн-ревью)\n"
+        "• 🎨 Генерировать изображения по описанию (DALL-E 3)\n\n"
         "Я помню последние 10 сообщений нашего диалога.\n\n"
         "Команды:\n"
         "/start — это сообщение\n"
@@ -51,18 +54,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         "ℹ️ *Как использовать бота:*\n\n"
         "Просто напишите любое сообщение или пришлите фото.\n\n"
-        "*Примеры текстовых запросов:*\n"
-        "• Напиши функцию на Python для сортировки списка\n"
+        "*Текстовые запросы:*\n"
+        "• Напиши функцию на Python для сортировки\n"
         "• Придумай слоган для кофейни\n"
-        "• Посоветуй цветовую палитру для мобильного приложения\n"
-        "• Объясни, как работает рекурсия\n\n"
-        "*Примеры с изображением:*\n"
+        "• Посоветуй цветовую палитру для приложения\n\n"
+        "*Генерация изображений:*\n"
+        "• Нарисуй закат над горами в стиле аниме\n"
+        "• Сгенерируй картинку с котом-астронавтом\n"
+        "• Создай изображение современного офиса\n\n"
+        "*Анализ фотографий:*\n"
         "• Пришли фото — бот опишет, что на нём\n"
         "• Скриншот кода → анализ ошибок\n"
         "• Скриншот интерфейса → дизайн-ревью\n"
-        "• Фото документа → извлечение текста (OCR)\n"
-        "• Фото продукта → описание для магазина\n\n"
-        "Бот помнит контекст последних 10 сообщений. "
+        "• Фото документа → извлечение текста\n\n"
         "Используйте /clear чтобы начать новый диалог.",
         parse_mode="Markdown",
     )
@@ -77,6 +81,14 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _send_result(update: Update, result: str) -> None:
+    if result.startswith(IMAGE_URL_PREFIX):
+        url = result[len(IMAGE_URL_PREFIX):]
+        await update.message.reply_photo(
+            photo=url,
+            caption="🎨 Изображение сгенерировано с помощью DALL-E 3",
+        )
+        return
+
     max_length = 4096
     if len(result) <= max_length:
         await update.message.reply_text(result)
@@ -86,13 +98,21 @@ async def _send_result(update: Update, result: str) -> None:
             await update.message.reply_text(chunk)
 
 
+def _is_image_gen(message: str) -> bool:
+    from crew_manager import is_image_generation_request
+    return is_image_generation_request(message)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_message = update.message.text
 
-    count = history_size(user_id)
-    context_note = f" (в памяти: {count} сообщ.)" if count > 0 else ""
-    processing_msg = await update.message.reply_text(PROCESSING_MESSAGE + context_note)
+    if _is_image_gen(user_message):
+        processing_msg = await update.message.reply_text(GENERATING_IMAGE_MESSAGE)
+    else:
+        count = history_size(user_id)
+        context_note = f" (в памяти: {count} сообщ.)" if count > 0 else ""
+        processing_msg = await update.message.reply_text(PROCESSING_MESSAGE + context_note)
 
     try:
         loop = asyncio.get_event_loop()
@@ -166,7 +186,7 @@ def main() -> None:
     )
     application.add_error_handler(error_handler)
 
-    logger.info("Bot started with image understanding support, polling for updates...")
+    logger.info("Bot started with image generation and understanding support, polling for updates...")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
