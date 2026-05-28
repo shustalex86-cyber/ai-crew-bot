@@ -14,7 +14,7 @@ from telegram.ext import (
 from config import TELEGRAM_TOKEN
 from crew_manager import run_crew
 from history import clear_history, history_size
-from agents import IMAGE_URL_PREFIX
+from agents import IMAGE_URL_PREFIX, IMAGE_B64_PREFIX
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -85,7 +85,17 @@ async def _send_result(update: Update, result: str) -> None:
         url = result[len(IMAGE_URL_PREFIX):]
         await update.message.reply_photo(
             photo=url,
-            caption="🎨 Изображение сгенерировано с помощью DALL-E 3",
+            caption="🎨 Изображение сгенерировано",
+        )
+        return
+
+    if result.startswith(IMAGE_B64_PREFIX):
+        import io
+        b64_data = result[len(IMAGE_B64_PREFIX):]
+        image_bytes = base64.b64decode(b64_data)
+        await update.message.reply_photo(
+            photo=io.BytesIO(image_bytes),
+            caption="🎨 Изображение сгенерировано с помощью gpt-image-1",
         )
         return
 
