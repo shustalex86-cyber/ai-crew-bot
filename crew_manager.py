@@ -1,8 +1,23 @@
 import logging
-from agents import orchestrator, programmer, copywriter, designer, general_agent
+from agents import (
+    orchestrator, programmer, copywriter, designer, general_agent,
+    generate_image, IMAGE_URL_PREFIX,
+)
 from history import get_history, add_exchange
 
 logger = logging.getLogger(__name__)
+
+IMAGE_GENERATION_KEYWORDS = [
+    "нарисуй", "нарисуйте", "нарисовать",
+    "сгенерируй", "сгенерируйте", "сгенерировать",
+    "создай изображение", "создайте изображение", "создать изображение",
+    "создай картинку", "создайте картинку",
+    "сделай картинку", "сделай изображение",
+    "генерируй", "генерация изображения",
+    "нарисуй картинку", "нарисуй картинк",
+    "изображение с", "картинку с", "картинку про",
+    "dall-e", "dalle",
+]
 
 PROGRAMMING_KEYWORDS = [
     "код", "программ", "скрипт", "функци", "класс", "алгоритм",
@@ -24,6 +39,11 @@ DESIGN_KEYWORDS = [
     "иконк", "баннер", "макет", "верстк", "визуал", "стиль",
     "палитра", "типографик", "брендинг", "layout", "figma", "wireframe",
 ]
+
+
+def is_image_generation_request(message: str) -> bool:
+    text = message.lower()
+    return any(kw in text for kw in IMAGE_GENERATION_KEYWORDS)
 
 
 def detect_task_type(message: str) -> str:
@@ -50,6 +70,12 @@ def run_crew(
     image_b64: str | None = None,
     media_type: str = "image/jpeg",
 ) -> str:
+    if is_image_generation_request(user_message):
+        logger.info("Image generation request from user %d", user_id)
+        result = generate_image(user_message)
+        add_exchange(user_id, user_message, "[изображение сгенерировано]")
+        return result
+
     task_type = detect_task_type(user_message)
     logger.info("Task type detected: %s for user %d (image: %s)", task_type, user_id, bool(image_b64))
 
@@ -59,7 +85,6 @@ def run_crew(
     orchestrator_brief = orchestrator(user_message, image_b64, media_type)
     logger.info("Orchestrator done.")
 
-    # Re-detect from orchestrator brief if it's an image-only message with no text cues
     if image_b64 and user_message in ("Проанализируй изображение", "Опиши изображение"):
         task_type = detect_task_type(orchestrator_brief)
         logger.info("Re-detected task type from orchestrator brief: %s", task_type)
