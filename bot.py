@@ -115,7 +115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         processing_msg = await update.message.reply_text(PROCESSING_MESSAGE + context_note)
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(executor, run_crew, user_message, user_id)
         await processing_msg.delete()
         await _send_result(update, result)
@@ -143,7 +143,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         byte_array = await file.download_as_bytearray()
         image_b64 = base64.b64encode(bytes(byte_array)).decode("utf-8")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             executor, run_crew, caption, user_id, image_b64, "image/jpeg"
         )
@@ -168,6 +168,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def main() -> None:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     application = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
@@ -190,7 +193,6 @@ def main() -> None:
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
-        close_loop=False,
     )
 
 
