@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from telegram import Update
@@ -21,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PROCESSING_MESSAGE = "⏳ Обрабатываю ваш запрос, это может занять некоторое время..."
+PROCESSING_IMAGE_MESSAGE = "🖼 Анализирую изображение, это может занять некоторое время..."
 
 executor = ThreadPoolExecutor(max_workers=4)
 
@@ -33,6 +35,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "💻 *Программист* — решает технические задачи и пишет код\n"
         "✍️ *Копирайтер* — создаёт тексты и контент\n"
         "🎨 *Дизайнер* — даёт советы по дизайну и визуалу\n\n"
+        "Я умею:\n"
+        "• Отвечать на текстовые вопросы\n"
+        "• 🖼 Анализировать изображения (описание, OCR, дизайн-ревью)\n\n"
         "Я помню последние 10 сообщений нашего диалога.\n\n"
         "Команды:\n"
         "/start — это сообщение\n"
@@ -45,13 +50,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "ℹ️ *Как использовать бота:*\n\n"
-        "Просто напишите любое сообщение — бот автоматически определит тип задачи "
-        "и подключит нужного специалиста.\n\n"
-        "*Примеры запросов:*\n"
+        "Просто напишите любое сообщение или пришлите фото.\n\n"
+        "*Примеры текстовых запросов:*\n"
         "• Напиши функцию на Python для сортировки списка\n"
         "• Придумай слоган для кофейни\n"
         "• Посоветуй цветовую палитру для мобильного приложения\n"
         "• Объясни, как работает рекурсия\n\n"
+        "*Примеры с изображением:*\n"
+        "• Пришли фото — бот опишет, что на нём\n"
+        "• Скриншот кода → анализ ошибок\n"
+        "• Скриншот интерфейса → дизайн-ревью\n"
+        "• Фото документа → извлечение текста (OCR)\n"
+        "• Фото продукта → описание для магазина\n\n"
         "Бот помнит контекст последних 10 сообщений. "
         "Используйте /clear чтобы начать новый диалог.",
         parse_mode="Markdown",
@@ -66,35 +76,64 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def _send_result(update: Update, result: str) -> None:
+    max_length = 4096
+    if len(result) <= max_length:
+        await update.message.reply_text(result)
+    else:
+        chunks = [result[i:i + max_length] for i in range(0, len(result), max_length)]
+        for chunk in chunks:
+            await update.message.reply_text(chunk)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_message = update.message.text
 
     count = history_size(user_id)
     context_note = f" (в памяти: {count} сообщ.)" if count > 0 else ""
-    processing_msg = await update.message.reply_text(
-        PROCESSING_MESSAGE + context_note
-    )
+    processing_msg = await update.message.reply_text(PROCESSING_MESSAGE + context_note)
 
     try:
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            executor, run_crew, user_message, user_id
-        )
+        result = await loop.run_in_executor(executor, run_crew, user_message, user_id)
         await processing_msg.delete()
-
-        max_length = 4096
-        if len(result) <= max_length:
-            await update.message.reply_text(result)
-        else:
-            chunks = [result[i:i + max_length] for i in range(0, len(result), max_length)]
-            for chunk in chunks:
-                await update.message.reply_text(chunk)
+        await _send_result(update, result)
 
     except Exception as e:
         logger.error("Error processing message: %s", e, exc_info=True)
         await processing_msg.edit_text(
             "❌ Произошла ошибка при обработке запроса. Пожалуйста, попробуйте ещё раз."
+        )
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    caption = update.message.caption or "Проанализируй изображение"
+
+    count = history_size(user_id)
+    context_note = f" (в памяти: {count} сообщ.)" if count > 0 else ""
+    processing_msg = await update.message.reply_text(
+        PROCESSING_IMAGE_MESSAGE + context_note
+    )
+
+    try:
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        byte_array = await file.download_as_bytearray()
+        image_b64 = base64.b64encode(bytes(byte_array)).decode("utf-8")
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor, run_crew, caption, user_id, image_b64, "image/jpeg"
+        )
+        await processing_msg.delete()
+        await _send_result(update, result)
+
+    except Exception as e:
+        logger.error("Error processing photo: %s", e, exc_info=True)
+        await processing_msg.edit_text(
+            "❌ Не удалось обработать изображение. Пожалуйста, попробуйте ещё раз."
         )
 
 
@@ -121,12 +160,13 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("clear", clear_command))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
     application.add_error_handler(error_handler)
 
-    logger.info("Bot started, polling for updates...")
+    logger.info("Bot started with image understanding support, polling for updates...")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
