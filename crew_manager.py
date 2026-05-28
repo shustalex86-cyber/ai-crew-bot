@@ -1,7 +1,7 @@
 import logging
 from agents import (
     orchestrator, programmer, copywriter, designer, general_agent,
-    generate_image, IMAGE_URL_PREFIX,
+    generate_image, IMAGE_URL_PREFIX, IMAGE_B64_PREFIX,
 )
 from history import get_history, add_exchange
 
