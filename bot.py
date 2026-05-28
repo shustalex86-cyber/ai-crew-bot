@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from telegram import Update
@@ -90,7 +91,6 @@ async def _send_result(update: Update, result: str) -> None:
         return
 
     if result.startswith(IMAGE_B64_PREFIX):
-        import io
         b64_data = result[len(IMAGE_B64_PREFIX):]
         image_bytes = base64.b64decode(b64_data)
         await update.message.reply_photo(
