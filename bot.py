@@ -59,6 +59,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Команды:\n"
         "/start — это сообщение\n"
         "/help — примеры запросов\n"
+        "/pdf — сохранить последний ответ как PDF\n"
         "/clear — очистить историю диалога",
         parse_mode="Markdown",
     )
@@ -85,9 +86,35 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Пришли PDF/TXT/DOCX — бот прочитает и ответит на вопросы\n"
         "• С подписью: «Выдели ключевые тезисы» или «Сделай краткое резюме»\n"
         "• Без подписи — бот сделает общее резюме документа\n\n"
+        "*Сохранение в PDF:*\n"
+        "• /pdf — получить последний ответ бота как PDF файл\n\n"
         "Используйте /clear чтобы начать новый диалог.",
         parse_mode="Markdown",
     )
+
+
+async def pdf_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    last = get_last_response(user_id)
+    if not last:
+        await update.message.reply_text(
+            "⚠️ Нет предыдущего ответа для сохранения в PDF.\n"
+            "Сначала задайте вопрос, а потом используйте /pdf."
+        )
+        return
+    processing_msg = await update.message.reply_text(CREATING_PDF_MESSAGE)
+    try:
+        loop = asyncio.get_running_loop()
+        pdf_buf = await loop.run_in_executor(executor, text_to_pdf, last, "Ответ ассистента")
+        await processing_msg.delete()
+        await update.message.reply_document(
+            document=pdf_buf,
+            filename="response.pdf",
+            caption="📄 Последний ответ сохранён в PDF",
+        )
+    except Exception as e:
+        logger.error("Error creating PDF: %s", e, exc_info=True)
+        await processing_msg.edit_text(f"❌ Не удалось создать PDF: {e}")
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -285,6 +312,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("pdf", pdf_command))
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
