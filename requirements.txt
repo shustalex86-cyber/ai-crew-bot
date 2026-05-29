@@ -2,3 +2,5 @@ anthropic
 openai
 python-telegram-bot==21.6
 python-dotenv
+pdfplumber
+python-docx
