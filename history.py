@@ -21,3 +21,11 @@ def clear_history(user_id: int) -> None:
 
 def history_size(user_id: int) -> int:
     return len(_store[user_id]) // 2
+
+
+def get_last_response(user_id: int) -> str | None:
+    messages = list(_store[user_id])
+    for msg in reversed(messages):
+        if msg["role"] == "assistant":
+            return msg["content"]
+    return None
