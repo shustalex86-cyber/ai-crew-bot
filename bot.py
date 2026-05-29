@@ -16,6 +16,7 @@ from config import TELEGRAM_TOKEN
 from crew_manager import run_crew
 from history import clear_history, history_size
 from agents import IMAGE_URL_PREFIX, IMAGE_B64_PREFIX
+from doc_extractor import extract_text, is_supported
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 PROCESSING_MESSAGE = "⏳ Обрабатываю ваш запрос, это может занять некоторое время..."
 PROCESSING_IMAGE_MESSAGE = "🖼 Анализирую изображение, это может занять некоторое время..."
-GENERATING_IMAGE_MESSAGE = "🎨 Генерирую изображение с помощью DALL-E 3..."
+GENERATING_IMAGE_MESSAGE = "🎨 Генерирую изображение с помощью gpt-image-1..."
+PROCESSING_DOCUMENT_MESSAGE = "📄 Извлекаю текст из документа и анализирую..."
 
 executor = ThreadPoolExecutor(max_workers=4)
 
@@ -41,7 +43,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Я умею:\n"
         "• Отвечать на текстовые вопросы\n"
         "• 🖼 Анализировать фотографии (описание, OCR, дизайн-ревью)\n"
-        "• 🎨 Генерировать изображения по описанию (DALL-E 3)\n\n"
+        "• 🎨 Генерировать изображения по описанию\n"
+        "• 📄 Читать и анализировать документы (PDF, TXT, DOCX)\n\n"
         "Я помню последние 10 сообщений нашего диалога.\n\n"
         "Команды:\n"
         "/start — это сообщение\n"
@@ -68,6 +71,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Скриншот кода → анализ ошибок\n"
         "• Скриншот интерфейса → дизайн-ревью\n"
         "• Фото документа → извлечение текста\n\n"
+        "*Работа с документами:*\n"
+        "• Пришли PDF/TXT/DOCX — бот прочитает и ответит на вопросы\n"
+        "• С подписью: «Выдели ключевые тезисы» или «Сделай краткое резюме»\n"
+        "• Без подписи — бот сделает общее резюме документа\n\n"
         "Используйте /clear чтобы начать новый диалог.",
         parse_mode="Markdown",
     )
@@ -167,6 +174,54 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    doc = update.message.document
+    caption = update.message.caption or "Сделай подробное резюме этого документа"
+
+    mime_type = doc.mime_type
+    file_name = doc.file_name or ""
+
+    if not is_supported(mime_type, file_name):
+        await update.message.reply_text(
+            "⚠️ Формат не поддерживается. Я работаю с PDF, TXT и DOCX файлами."
+        )
+        return
+
+    processing_msg = await update.message.reply_text(PROCESSING_DOCUMENT_MESSAGE)
+
+    try:
+        file = await context.bot.get_file(doc.file_id)
+        byte_array = await file.download_as_bytearray()
+        file_bytes = bytes(byte_array)
+
+        extracted = extract_text(file_bytes, mime_type, file_name)
+        if not extracted.strip():
+            await processing_msg.edit_text(
+                "⚠️ Не удалось извлечь текст из документа. "
+                "Возможно, PDF содержит только сканы без OCR."
+            )
+            return
+
+        char_count = len(extracted)
+        full_message = (
+            f"{caption}\n\n"
+            f"--- СОДЕРЖИМОЕ ДОКУМЕНТА ({file_name}, ~{char_count} симв.) ---\n\n"
+            f"{extracted}"
+        )
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(executor, run_crew, full_message, user_id)
+        await processing_msg.delete()
+        await _send_result(update, result)
+
+    except Exception as e:
+        logger.error("Error processing document: %s", e, exc_info=True)
+        await processing_msg.edit_text(
+            f"❌ Не удалось обработать документ: {e}"
+        )
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error — another instance may be running. Retrying in 5s...")
@@ -194,6 +249,7 @@ def main() -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
