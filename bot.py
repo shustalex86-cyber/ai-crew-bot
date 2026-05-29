@@ -14,9 +14,10 @@ from telegram.ext import (
 )
 from config import TELEGRAM_TOKEN
 from crew_manager import run_crew
-from history import clear_history, history_size
+from history import clear_history, history_size, get_last_response
 from agents import IMAGE_URL_PREFIX, IMAGE_B64_PREFIX
 from doc_extractor import extract_text, is_supported
+from pdf_creator import text_to_pdf
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -28,6 +29,15 @@ PROCESSING_MESSAGE = "⏳ Обрабатываю ваш запрос, это м�
 PROCESSING_IMAGE_MESSAGE = "🖼 Анализирую изображение, это может занять некоторое время..."
 GENERATING_IMAGE_MESSAGE = "🎨 Генерирую изображение с помощью gpt-image-1..."
 PROCESSING_DOCUMENT_MESSAGE = "📄 Извлекаю текст из документа и анализирую..."
+CREATING_PDF_MESSAGE = "📝 Создаю PDF файл..."
+
+PDF_KEYWORDS = [
+    "сохрани как pdf", "сохрани в pdf", "сохранить как pdf", "сохранить в pdf",
+    "отправь pdf", "отправь в pdf", "отправить pdf",
+    "создай pdf", "создать pdf", "сделай pdf", "сделать pdf",
+    "скачать pdf", "скачай pdf", "экспорт в pdf", "экспортируй в pdf",
+    "в формате pdf", "как pdf документ",
+]
 
 executor = ThreadPoolExecutor(max_workers=4)
 
@@ -120,9 +130,37 @@ def _is_image_gen(message: str) -> bool:
     return is_image_generation_request(message)
 
 
+def _is_pdf_request(message: str) -> bool:
+    text = message.lower()
+    return any(kw in text for kw in PDF_KEYWORDS)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_message = update.message.text
+
+    if _is_pdf_request(user_message):
+        last = get_last_response(user_id)
+        if not last:
+            await update.message.reply_text(
+                "⚠️ Нет предыдущего ответа для сохранения в PDF. "
+                "Сначала задайте вопрос, потом попросите сохранить ответ."
+            )
+            return
+        processing_msg = await update.message.reply_text(CREATING_PDF_MESSAGE)
+        try:
+            loop = asyncio.get_running_loop()
+            pdf_buf = await loop.run_in_executor(executor, text_to_pdf, last, "Ответ ассистента")
+            await processing_msg.delete()
+            await update.message.reply_document(
+                document=pdf_buf,
+                filename="response.pdf",
+                caption="📄 Последний ответ сохранён в PDF",
+            )
+        except Exception as e:
+            logger.error("Error creating PDF: %s", e, exc_info=True)
+            await processing_msg.edit_text(f"❌ Не удалось создать PDF: {e}")
+        return
 
     if _is_image_gen(user_message):
         processing_msg = await update.message.reply_text(GENERATING_IMAGE_MESSAGE)
